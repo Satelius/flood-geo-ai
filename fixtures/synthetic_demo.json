@@ -1,0 +1,19 @@
+{
+  "synthetic": true,
+  "description": "人工构造用于生命周期验证；不表示真实洪水或道路封闭",
+  "data": {"records": [
+    {"datetime": "2026-09-24T10:00:00+08:00", "updatedTimestamp": "2026-09-24T10:00:00+08:00", "item": {"identifier": "demo-alert-1", "sender": "synthetic", "msgType": "Alert", "readings": [
+      {"area": {"areaDesc": "Synthetic Road A", "circle": ["1.326", "103.844", "1"]}, "description": "Flash flood at Synthetic Road A (from Junction A to Junction B)", "severity": "Moderate", "expires": "2026-09-24T12:00:00+08:00"},
+      {"area": {"areaDesc": "Synthetic Road B", "circle": "1.327,103.849,0.5"}, "description": "Flash flood along Synthetic Road B", "severity": "Moderate", "expires": "2026-09-24T12:00:00+08:00"}
+    ]}},
+    {"datetime": "2026-09-24T10:10:00+08:00", "item": {"identifier": "demo-expire", "sender": "synthetic", "msgType": "Alert", "readings": [
+      {"area": {"areaDesc": "Synthetic Road C", "circle": [1.34, 103.86, 1]}, "description": "Flash flood along Synthetic Road C", "expires": "2026-09-24T10:40:00+08:00"}
+    ]}},
+    {"datetime": "2026-09-24T10:15:00+08:00", "item": {"readings": [
+      {"area": {"areaDesc": "Uncertain synthetic location", "circle": [1.32, 103.88, 1]}, "description": "Location without official message identifier"},
+      {"area": {"areaDesc": "Invalid synthetic coordinates", "circle": [91, 181, 1]}, "description": "Invalid coordinates retained for audit"}
+    ]}},
+    {"datetime": "2026-09-24T10:30:00+08:00", "item": {"identifier": "demo-cancel-1", "sender": "synthetic", "msgType": "Cancel", "references": "synthetic,demo-alert-1,2026-09-24T10:00:00+08:00", "readings": []}},
+    {"datetime": "2026-09-24T11:00:00+08:00", "item": {"readings": []}}
+  ]}
+}
