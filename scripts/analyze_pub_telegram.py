@@ -200,7 +200,7 @@ def render_markdown(profile: dict, rows: list[dict]) -> str:
     lines += ["", "这些是本样本观察到的结构，不是频道未来消息的必填字段契约；5类是分析规则分类，不证明来源只可能发布5类信息。", "", f"时间形式计数（可重叠）：{json.dumps(profile['format_flags'],ensure_ascii=False)}。",
               "正文时间只保留原文证据，未推断日期；Telegram发布时间不等于正文Issued时间，也不能自动作为洪水开始或结束时刻。",
               "", "## 重复与未知", "", f"完全相同正文候选组：{profile['exact_body_duplicate_candidates']}（未自动删除）。规则未识别 ID：{profile['other_message_ids']}。",
-              "相同正文可在不同时间再次发布，地点相同或正文近似也可能是后续更新；不能仅按正文或地点自动合并。Boon Lay Avenue与Boon Lay Ave的消退通知还体现近似重复/更新候选，需要人工核对。",
+              "相同正文可在不同时间再次发布，地点相同或正文近似也可能是后续更新；不能仅按正文或地点自动合并。简略与带道路区间的消退通知可能是近似重复或后续更新，仍需人工核对。",
               "", "## 来源、完整性与研究复用限制", "",
               "本次只遍历当前 [pubfloodalerts公开网页](https://t.me/s/pubfloodalerts)，没有合并旧sgflood别名。采集清单与页面哈希见JSON输出及manifest。公开页面成功回溯至窗口之前，不能保证被删除、被编辑、不可见或未呈现的历史消息完整。",
               f"可见edited标记消息 {profile['visible_edited_marker_count']} 条；没有恢复其历史版本。公开正文有可能是已编辑后的版本或网页截断呈现（如1332反诈骗通知末尾为please），下表的完整正文指完整可见文本。",
