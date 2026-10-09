@@ -41,7 +41,7 @@ class PubTelegramRuleTests(unittest.TestCase):
     def test_published_time_and_body_time_are_distinct(self):
         row = annotate_message({'published_at_sgt':'2026-01-02T00:01:00+08:00', 'text':'Flash flood at Example Road A. Issued 0001 hours.'})
         self.assertEqual(row['body_clock_evidence'][0]['clock'],'0001')
-        self.assertEqual(row['published_at_sgt'],'2026-09-30T15:15:00+08:00')
+        self.assertEqual(row['published_at_sgt'],'2026-01-02T00:01:00+08:00')
 
     def test_no_generic_word_flood_classifier(self):
         self.assertEqual(classify_message('PUB flood resilience update')[0],'other')
