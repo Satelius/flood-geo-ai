@@ -1,8 +1,10 @@
 import json
+import tempfile
 import threading
 import unittest
 import urllib.error
 import urllib.request
+from pathlib import Path
 from urllib.parse import urlencode
 
 from flood_agent.demo import demo_route
@@ -88,6 +90,80 @@ class ServerTests(unittest.TestCase):
         with self.assertRaises(urllib.error.HTTPError) as caught:
             urllib.request.urlopen(request)
         self.assertEqual(caught.exception.code, 403)
+        caught.exception.close()
+
+    def test_artifact_whitelist_and_history_probe_manifest(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            fixture_root = Path(temp_dir)
+            fixture_files = {
+                'experiments/history_availability.json': '{"days":[]}\n',
+                'experiments/history_availability_zh.md': '# history fixture\n',
+                'experiments/corpus_profile_zh.md': '# corpus fixture\n',
+                'scripts/report_history_availability.py': 'history_availability = True\n',
+                'README.md': '# artifact fixture\n',
+                'data/research/history-probe/2024-10-08/page-001.json': '{"date":"2024-10-08"}\n',
+            }
+            for relative_path, body in fixture_files.items():
+                path = fixture_root / relative_path
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(body, encoding='utf-8')
+
+            server = make_server(self.store, port=0, root=fixture_root)
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            base = f'http://127.0.0.1:{server.server_port}'
+            try:
+                self._assert_artifact_routes(base)
+            finally:
+                server.shutdown()
+                server.server_close()
+                thread.join(timeout=5)
+
+    def _assert_artifact_routes(self, base):
+        allowed_paths = (
+            '/artifacts/history-availability.json',
+            '/artifacts/history-availability-zh.md',
+            '/artifacts/corpus-profile-zh.md',
+            '/artifacts/report-generator.py',
+            '/artifacts/README.md',
+            '/artifacts/history-probe/2024-10-08/page-001.json',
+        )
+        for path in allowed_paths:
+            with self.subTest(path=path), urllib.request.urlopen(base + path) as response:
+                self.assertEqual(response.status, 200)
+                self.assertGreater(int(response.headers['Content-Length']), 0)
+
+        with urllib.request.urlopen(base + '/artifacts/history-probe/manifest.json') as response:
+            manifest = json.load(response)
+        self.assertIn('2024-10-08', {entry['date'] for entry in manifest['dates']})
+        with urllib.request.urlopen(base + '/artifacts/report-generator.py') as response:
+            self.assertIn(b'history_availability', response.read())
+
+        rejected_paths = (
+            '/artifacts/.env',
+            '/artifacts/data/flood.sqlite3',
+            '/artifacts/not-allowlisted.json',
+            '/artifacts/%2e%2e/.env',
+            '/artifacts/history-probe/2024-10-08/%2e%2e/%2e%2e/README.md',
+            '/artifacts/history-probe/2024-13-40/page-001.json',
+            '/artifacts/history-probe/2024-10-08/page-0001.json',
+        )
+        for path in rejected_paths:
+            with self.subTest(path=path), self.assertRaises(urllib.error.HTTPError) as caught:
+                urllib.request.urlopen(base + path)
+            self.assertEqual(caught.exception.code, 404)
+            caught.exception.close()
+
+    def test_report_redirects_to_history_report(self):
+        class NoRedirectHandler(urllib.request.HTTPRedirectHandler):
+            def redirect_request(self, request, response, code, message, headers, new_url):
+                return None
+
+        opener = urllib.request.build_opener(NoRedirectHandler)
+        with self.assertRaises(urllib.error.HTTPError) as caught:
+            opener.open(self.base + '/report')
+        self.assertEqual(caught.exception.code, 302)
+        self.assertEqual(caught.exception.headers['Location'], '/reports/history.html')
         caught.exception.close()
 
 

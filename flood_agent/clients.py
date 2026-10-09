@@ -2,6 +2,7 @@ import json
 import os
 import math
 import time
+import threading
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -10,7 +11,25 @@ FLOOD_URL = 'https://api-open.data.gov.sg/v2/real-time/api/weather/flood-alerts'
 
 
 class ServiceError(ValueError):
-    pass
+    def __init__(self, message, status_code=None, incomplete=False, progress=None):
+        super().__init__(message)
+        self.status_code = status_code
+        self.incomplete = incomplete
+        self.progress = progress or {}
+
+
+_FLOOD_REQUEST_LOCK = threading.Lock()
+_LAST_FLOOD_REQUEST = 0.0
+
+
+def request_flood_json(url, headers=None, body=None):
+    global _LAST_FLOOD_REQUEST
+    with _FLOOD_REQUEST_LOCK:
+        remaining = 2.0 - (time.monotonic() - _LAST_FLOOD_REQUEST)
+        if remaining > 0:
+            time.sleep(remaining)
+        _LAST_FLOOD_REQUEST = time.monotonic()
+        return request_json(url, headers=headers, body=body)
 
 
 def request_json(url, headers=None, body=None):
@@ -30,8 +49,10 @@ def request_json(url, headers=None, body=None):
                 time.sleep(delay)
                 continue
             if error.code == 401:
-                raise ServiceError('外部服务 HTTP 401；token 可能无效或过期，请更新本地凭据') from None
-            raise ServiceError(f'外部服务返回 HTTP {error.code}；请检查凭据、限流或网络') from None
+                raise ServiceError('外部服务 HTTP 401；token 可能无效或过期，请更新本地凭据',
+                                   status_code=401) from None
+            raise ServiceError(f'外部服务返回 HTTP {error.code}；请检查凭据、限流或网络',
+                               status_code=error.code) from None
         except (urllib.error.URLError, TimeoutError, OSError):
             if attempt < 2:
                 time.sleep(0.5 * (attempt + 1))
@@ -44,8 +65,24 @@ def fetch_flood(store, source='live', date=None, request_fn=None):
         raise ValueError('实时采集使用 live；指定日期使用 archive')
     if source == 'archive' and not date:
         raise ValueError('archive 采集需要 date')
-    requester = request_fn or request_json
+    requester = request_fn or request_flood_json
     token, seen, pages, added = None, set(), 0, 0
+    record_count, snapshot_ids, messages = 0, [], {}
+
+    def progress():
+        summary = [messages[key] for key in sorted(messages)]
+        non_cancel = [message for message in summary if message['msg_type'].lower() != 'cancel']
+        return {'pages': pages, 'messages_added': added, 'snapshot_ids': list(snapshot_ids),
+                'record_count': record_count, 'messages_received': len(summary),
+                'message_count': len(non_cancel),
+                'alert_message_count': len(non_cancel),
+                'explicit_alert_message_count': sum(message['msg_type'].lower() == 'alert' for message in non_cancel),
+                'reading_count': sum(message['reading_count'] for message in non_cancel),
+                'unknown_msg_type_count': sum(message['msg_type'].lower() not in ('alert', 'cancel') for message in non_cancel),
+                'undated_message_count': sum(
+                    not message['has_valid_sent'] and message['msg_type'].lower() != 'cancel'
+                    for message in summary)}
+
     while pages < 100:
         params = {'date': date} if date else {}
         if token:
@@ -54,22 +91,36 @@ def fetch_flood(store, source='live', date=None, request_fn=None):
         try:
             status, raw = requester(FLOOD_URL + ('?' + urllib.parse.urlencode(params) if params else ''), headers=headers)
         except ServiceError as error:
-            store.save_raw(source, None, params, status=None, error=str(error))
-            raise
+            snapshot_ids.append(store.save_raw(source, None, params, status=error.status_code, error=str(error)))
+            raise ServiceError(str(error), status_code=error.status_code,
+                incomplete=pages > 0, progress=progress()) from None
         snapshot_id = store.save_raw(source, raw, params, status=status)
-        result = store.process_snapshot(snapshot_id)
+        snapshot_ids.append(snapshot_id)
+        if status != 200:
+            error = f'外部服务返回 HTTP {status}；该日期没有形成完整覆盖'
+            store.connection.execute('UPDATE snapshots SET error=? WHERE id=?', (error, snapshot_id))
+            store.connection.commit()
+            raise ServiceError(error, status_code=status, incomplete=pages > 0, progress=progress())
+        try:
+            result = store.process_snapshot(snapshot_id)
+        except (ValueError, TypeError, json.JSONDecodeError):
+            raise ServiceError('PUB 响应无法按预期结构解析；原始响应已保留',
+                               incomplete=pages > 0, progress=progress()) from None
         pages += 1
         added += result['messages_added']
+        record_count += len(json.loads(raw).get('data', {}).get('records', []))
+        for message in result['message_summaries']:
+            messages.setdefault(message['message_key'], message)
         payload = json.loads(raw)
         token = payload.get('data', {}).get('paginationToken') or payload.get('paginationToken')
         if not token:
-            return {'pages': pages, 'messages_added': added, 'source': source, 'complete': True}
+            return progress() | {'source': source, 'complete': True}
         if token in seen:
-            raise ServiceError('分页 token 循环；停止采集，已保留收到的快照')
+            raise ServiceError('分页 token 循环；停止采集，已保留收到的快照',
+                               incomplete=True, progress=progress())
         seen.add(token)
-        if request_fn is None:
-            time.sleep(2)
-    raise ServiceError('分页超过 100 页；停止采集，已保留收到的快照')
+    raise ServiceError('分页超过 100 页；停止采集，已保留收到的快照',
+                       incomplete=True, progress=progress())
 
 
 def decode_polyline(encoded):

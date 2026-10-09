@@ -67,6 +67,20 @@ class ClientTests(unittest.TestCase):
             with self.assertRaises(ServiceError): request_json('https://example.test')
             self.assertEqual(mocked.call_count, 1)
 
+    def test_401_status_is_preserved_on_error_and_failure_snapshot(self):
+        error = urllib.error.HTTPError('https://example.test', 401, 'unauthorized', {}, None)
+        with patch('urllib.request.urlopen', side_effect=error), patch('time.sleep'):
+            with self.assertRaises(ServiceError) as caught:
+                request_json('https://example.test')
+        self.assertEqual(caught.exception.status_code, 401)
+
+        def unauthorized(*args, **kwargs):
+            raise ServiceError('HTTP 401', status_code=401)
+        with self.assertRaises(ServiceError):
+            fetch_flood(self.store, 'archive', '2025-01-01', unauthorized)
+        row = self.store.connection.execute('SELECT http_status FROM snapshots ORDER BY id DESC LIMIT 1').fetchone()
+        self.assertEqual(row['http_status'], 401)
+
     def test_exhausted_429(self):
         error = urllib.error.HTTPError('https://example.test', 429, 'rate limited', {}, None)
         with patch('urllib.request.urlopen', side_effect=error) as mocked, patch('time.sleep'):

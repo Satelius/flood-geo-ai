@@ -34,13 +34,14 @@ def parse_circle(value):
         return None, None, ['invalid_or_missing_circle']
 
 
-def normalize_payload(payload, source, snapshot_id, fetched_at):
+def normalize_payload(payload, source, snapshot_id, fetched_at, request_context=None):
     if not isinstance(payload, dict) or payload.get('code', 0) != 0:
         raise ValueError('PUB 返回错误状态或非对象响应')
     data = payload.get('data')
     if not isinstance(data, dict) or not isinstance(data.get('records'), list):
         raise ValueError('PUB 响应缺少 data.records 数组')
     messages = []
+    request_context = request_context or {}
     for record in data['records']:
         if not isinstance(record, dict):
             continue
@@ -50,27 +51,38 @@ def normalize_payload(payload, source, snapshot_id, fetched_at):
         readings = item.get('readings') or []
         if not isinstance(readings, list):
             readings = []
-        msg_type = str(item.get('msgType') or '')
-        if not readings and msg_type.lower() != 'cancel':
+        msg_type = str(item.get('msgType') or '').strip()
+        has_message_text = any(str(item.get(key) or '').strip() for key in ('description', 'headline'))
+        if not readings and msg_type.lower() != 'cancel' and msg_type.lower() != 'alert' and not has_message_text:
             continue
         identifier = item.get('identifier')
-        sent = item.get('sent') or record.get('datetime')
+        supplied_sent = item.get('sent')
+        record_datetime = record.get('datetime')
+        sent = supplied_sent if parse_time(supplied_sent) else record_datetime
         sender = item.get('sender') or ''
         unique_readings = {stable_key(reading): reading for reading in readings if isinstance(reading, dict)}
         identity = {'sender': sender, 'identifier': identifier, 'sent': sent} if identifier else {
             'msgType': msg_type, 'sent': sent, 'sender': sender,
             'readings': [unique_readings[key] for key in sorted(unique_readings)],
-            'description': item.get('description'), 'references': item.get('references')}
+            'description': item.get('description'), 'headline': item.get('headline'),
+            'instruction': item.get('instruction'), 'expires': item.get('expires'),
+            'references': item.get('references'),
+            'request_date': request_context.get('date') if source == 'archive' and not parse_time(sent) else None}
         message = {'message_key': stable_key(identity), 'identifier': identifier, 'sender': sender,
                    'msg_type': msg_type, 'sent': sent, 'expires': item.get('expires'),
-                   'references': item.get('references'), 'description': str(item.get('description') or ''),
+                   'references': item.get('references'),
+                   'description': str(item.get('description') or item.get('headline') or ''),
                    'source': source, 'raw_snapshot_id': snapshot_id, 'fetched_at': fetched_at,
                    'api_updated_at': record.get('updatedTimestamp') or record.get('timestamp'),
                    'quality_flags': [] if identifier else ['missing_identifier'], 'readings': []}
-        if not item.get('sent') and record.get('datetime'):
+        if not parse_time(supplied_sent) and record_datetime:
             message['quality_flags'].append('issued_time_from_record_datetime')
+            if supplied_sent:
+                message['quality_flags'].append('invalid_sent_replaced_by_record_datetime')
         if not parse_time(sent):
             message['quality_flags'].append('missing_or_invalid_sent')
+        if not readings:
+            message['quality_flags'].append('message_without_readings')
         for key in sorted(unique_readings):
             reading = unique_readings[key]
             area = reading.get('area') or {}

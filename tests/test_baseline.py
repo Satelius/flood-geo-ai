@@ -49,12 +49,13 @@ class StoreTests(unittest.TestCase):
     def seed_window(self, source='demo'):
         self.store.ingest(payload(readings=[], msg_type=''), source, START)
 
-    def test_empty_records_and_readings(self):
+    def test_empty_records_and_zero_reading_alert(self):
         self.store.ingest({'data': {'records': []}})
         self.store.ingest(payload(readings=[]))
         result = self.store.events()
         self.assertEqual(result['features'], [])
-        self.assertEqual(result['metadata']['message_count'], 0)
+        self.assertEqual(result['metadata']['message_count'], 1)
+        self.assertEqual(result['metadata']['explicit_alert_message_count'], 1)
 
     def test_deduplication_preserves_raw_snapshots(self):
         for _ in range(3):
